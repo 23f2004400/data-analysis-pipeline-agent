@@ -1,0 +1,195 @@
+"""
+Top-level orchestration for the data-analysis-pipeline-agent.
+
+run_pipeline() is the explicit state machine that IS the agentic core of this
+project:
+
+    LOAD -> CLASSIFY -> VALIDATE_SIZE -> CHECK_NORMALITY -> CHECK_VARIANCE
+    -> SELECT_TEST -> EXECUTE -> REPORT
+
+with two early-exit branches:
+  - stop right after CLASSIFY if the question is "unclear" -- never guess
+    which columns to compare on a load-dependent statistical step
+  - stop right after VALIDATE_SIZE if the sample size check fails -- never
+    run assumption checks on data that can't statistically support them
+
+Every state transition appends a structured record to decision_trail, so the
+exact reasoning chain -- including which branch was taken and why -- is fully
+inspectable after the fact. See CLAUDE.md for why this live branching, not a
+fixed sequence, is what makes the system agentic.
+"""
+
+from agent.question_classifier import classify_question
+from core.assumption_checker import check_equal_variance, check_normality
+from core.sample_size_validator import validate_sample_size
+from core.test_executor import run_test
+from core.test_selector import select_test
+from data.loader import load_groups
+
+
+def _early_exit(status, reasoning, decision_trail):
+    return {
+        "status": status,
+        "test_used": None,
+        "statistic": None,
+        "p_value": None,
+        "significant": None,
+        "reasoning": reasoning,
+        "decision_trail": decision_trail,
+    }
+
+
+def run_pipeline(csv_path, question):
+    decision_trail = []
+
+    # --- LOAD ---
+    try:
+        group_a, group_b = load_groups(csv_path)
+    except ValueError as exc:
+        decision_trail.append({
+            "step": "LOAD",
+            "input": {"csv_path": csv_path},
+            "result": {"error": str(exc)},
+            "decision": "abort: failed to load dataset",
+        })
+        return _early_exit("aborted", f"Could not load dataset: {exc}", decision_trail)
+
+    decision_trail.append({
+        "step": "LOAD",
+        "input": {"csv_path": csv_path},
+        "result": {"n_a": len(group_a), "n_b": len(group_b)},
+        "decision": "loaded dataset, proceeding to CLASSIFY",
+    })
+
+    # --- CLASSIFY ---
+    question_type = classify_question(question)
+    decision_trail.append({
+        "step": "CLASSIFY",
+        "input": {"question": question},
+        "result": {"question_type": question_type},
+        "decision": (
+            "question classified as 'two_group', proceeding to VALIDATE_SIZE"
+            if question_type == "two_group"
+            else f"question classified as '{question_type}', stopping for clarification"
+        ),
+    })
+
+    if question_type != "two_group":
+        reasoning = (
+            f"The question could not be confidently classified as a two-group "
+            f"comparison (classified as '{question_type}' instead). This "
+            f"pipeline currently only supports two-group comparisons, so it "
+            f"stopped rather than guessing which columns to compare."
+        )
+        return _early_exit("needs_clarification", reasoning, decision_trail)
+
+    # --- VALIDATE_SIZE ---
+    size_check = validate_sample_size(group_a, group_b)
+    decision_trail.append({
+        "step": "VALIDATE_SIZE",
+        "input": {"n_a": len(group_a), "n_b": len(group_b)},
+        "result": size_check,
+        "decision": (
+            "sample size sufficient, proceeding to CHECK_NORMALITY"
+            if size_check["passed"]
+            else "abort: insufficient sample size"
+        ),
+    })
+
+    if not size_check["passed"]:
+        reasoning = (
+            f"The pipeline aborted before running any statistical test because "
+            f"the sample size check failed: {size_check['reason']}"
+        )
+        return _early_exit("aborted", reasoning, decision_trail)
+
+    # --- CHECK_NORMALITY ---
+    normality_check = check_normality(group_a, group_b)
+    decision_trail.append({
+        "step": "CHECK_NORMALITY",
+        "input": {"n_a": len(group_a), "n_b": len(group_b)},
+        "result": normality_check,
+        "decision": (
+            "normality holds, proceeding to CHECK_VARIANCE"
+            if normality_check["passed"]
+            else "normality violated, skipping variance check, proceeding to SELECT_TEST"
+        ),
+    })
+
+    # --- CHECK_VARIANCE (only reached if normality passed) ---
+    variance_check = None
+    if normality_check["passed"]:
+        variance_check = check_equal_variance(group_a, group_b)
+        decision_trail.append({
+            "step": "CHECK_VARIANCE",
+            "input": {"n_a": len(group_a), "n_b": len(group_b)},
+            "result": variance_check,
+            "decision": "proceeding to SELECT_TEST",
+        })
+
+    # --- SELECT_TEST ---
+    selection = select_test(size_check, normality_check, variance_check)
+    decision_trail.append({
+        "step": "SELECT_TEST",
+        "input": {
+            "size_check": size_check,
+            "normality_check": normality_check,
+            "variance_check": variance_check,
+        },
+        "result": selection,
+        "decision": (
+            f"proceeding to EXECUTE with '{selection['test']}'"
+            if selection["action"] == "run_test"
+            else "abort: test selector declined to select a test"
+        ),
+    })
+
+    if selection["action"] != "run_test":
+        reasoning = f"The pipeline aborted at test selection: {selection['reason']}"
+        return _early_exit("aborted", reasoning, decision_trail)
+
+    # --- EXECUTE ---
+    result = run_test(selection["test"], group_a, group_b)
+    decision_trail.append({
+        "step": "EXECUTE",
+        "input": {"test": selection["test"], "n_a": len(group_a), "n_b": len(group_b)},
+        "result": result,
+        "decision": "proceeding to REPORT",
+    })
+
+    # --- REPORT ---
+    variance_sentence = (
+        f" Variance check {'passed' if variance_check['passed'] else 'failed'} "
+        f"({variance_check['reason']})."
+        if variance_check is not None
+        else ""
+    )
+    reasoning = (
+        f"Loaded {len(group_a)} samples for group_a and {len(group_b)} for group_b. "
+        f"The question was classified as a two-group comparison. The sample size "
+        f"check passed ({size_check['reason']}). Normality check "
+        f"{'passed' if normality_check['passed'] else 'failed'} "
+        f"({normality_check['reason']})."
+        f"{variance_sentence} "
+        f"Selected {selection['test']} ({selection['reason']}). "
+        f"Result: statistic={result['statistic']:.4f}, p_value={result['p_value']:.4f} -- "
+        f"{'a statistically significant' if result['significant'] else 'no statistically significant'} "
+        f"difference was found between the two groups."
+    )
+
+    decision_trail.append({
+        "step": "REPORT",
+        "input": result,
+        "result": {"status": "success"},
+        "decision": "pipeline completed successfully",
+    })
+
+    return {
+        "status": "success",
+        "test_used": result["test_used"],
+        "statistic": result["statistic"],
+        "p_value": result["p_value"],
+        "significant": result["significant"],
+        "reasoning": reasoning,
+        "decision_trail": decision_trail,
+    }
