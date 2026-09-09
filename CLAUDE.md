@@ -46,6 +46,20 @@ assuming it exists or behaves a certain way** — build against the contract in
 [docs/contract.md](docs/contract.md) regardless of what's actually there, and stub
 around gaps rather than blocking on them.
 
+## Setup
+
+This project uses [uv](https://github.com/astral-sh/uv) for virtual environment
+management — not plain `venv`/`pip` directly.
+
+```bash
+uv venv --python 3.11
+source .venv/bin/activate        # Mac/Linux
+.venv\Scripts\Activate.ps1       # Windows (PowerShell)
+uv pip install -r requirements.txt
+```
+
+`.venv/` is gitignored — never commit it.
+
 ## Shared contract (summary — full detail in docs/contract.md)
 
 All five functions below live in `core/` and are pure/deterministic (no I/O, no
@@ -108,7 +122,32 @@ Update this section as milestones complete. Do not let it go stale.
   - [x] `agent/reasoning_trace.py` — `format_trace()` for readable trail display
   - [x] `tests/test_agent.py` — 10 tests, all passing, covering all 4 branch
         outcomes + both early-exit paths + classifier categories
-- [ ] `app.py` — Streamlit UI
+- [x] **Milestone 3 — Streamlit Interface** (this milestone):
+  - [x] `app.py` — upload-or-preset dataset picker (4 sample CSVs pre-wired with
+        two_group-safe demo questions), question input, "Run Agent" button
+  - [x] Decision trail rendered as one card per step (no raw dict dumps),
+        with `SELECT_TEST` always visually highlighted as the branch decision
+        point and `CHECK_NORMALITY` specially highlighted when it fails (the
+        moment the pipeline diverges from the default path)
+  - [x] `aborted` and `needs_clarification` statuses shown as clear banners
+        instead of broken/empty result fields
+  - [x] Final result (test used, statistic, p-value, significance, full
+        reasoning) shown in its own bordered box, separate from the trail
+- [x] **Milestone 4 — Documentation + Submission Package** (this milestone):
+  - [x] `README.md` — full judge-facing rewrite: problem, why-agentic + branch
+        table, features, architecture link, tech stack rationale, `uv` setup,
+        run/test commands, env-vars-none-required statement, no-secrets
+        statement, honest known limitations, future work, team section
+  - [x] `docs/architecture.md` — Mermaid flowchart + explicit "no LLM anywhere"
+        statement + honest hackathon-checklist category mapping (what applies,
+        what doesn't, and why)
+  - [x] `docs/brief.md` — half-page Stage 1 submission brief (problem, target
+        users, why agentic, proposed solution, expected impact) — distinct from
+        the README, not a repeat of it
 - [ ] `agent/question_classifier.py` optional LLM layer (currently offline-only by
       design; an LLM-assisted upgrade path remains open, see docs/decisions.md)
-- [ ] End-to-end demo run
+- [ ] **Fresh-clone verification pass before submission** — clone the repo into a
+      clean directory, follow README.md's `uv` setup instructions exactly as
+      written, run `pytest tests/ -v` and `streamlit run app.py`, and confirm all
+      4 sample datasets + both early-exit paths still work with zero manual fixes.
+      Not yet done as of Milestone 4.
