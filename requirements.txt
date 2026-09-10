@@ -3,3 +3,4 @@ scipy>=1.14
 pandas>=2.2
 pytest>=8.0
 streamlit>=1.32
+fpdf2>=2.7

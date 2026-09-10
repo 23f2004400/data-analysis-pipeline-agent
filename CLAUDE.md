@@ -122,17 +122,31 @@ Update this section as milestones complete. Do not let it go stale.
   - [x] `agent/reasoning_trace.py` — `format_trace()` for readable trail display
   - [x] `tests/test_agent.py` — 10 tests, all passing, covering all 4 branch
         outcomes + both early-exit paths + classifier categories
-- [x] **Milestone 3 — Streamlit Interface** (this milestone):
-  - [x] `app.py` — upload-or-preset dataset picker (4 sample CSVs pre-wired with
-        two_group-safe demo questions), question input, "Run Agent" button
-  - [x] Decision trail rendered as one card per step (no raw dict dumps),
-        with `SELECT_TEST` always visually highlighted as the branch decision
-        point and `CHECK_NORMALITY` specially highlighted when it fails (the
-        moment the pipeline diverges from the default path)
-  - [x] `aborted` and `needs_clarification` statuses shown as clear banners
-        instead of broken/empty result fields
-  - [x] Final result (test used, statistic, p-value, significance, full
-        reasoning) shown in its own bordered box, separate from the trail
+- [x] **Milestone 3 — Streamlit Interface** (initial build, later redesigned —
+      see below; this checklist reflects the current `app.py`):
+  - [x] `app.py` — three-panel layout (Input | Agent Pipeline | Results), all
+        visible simultaneously, dark theme via `.streamlit/config.toml`
+  - [x] Input panel — upload a CSV or pick from a single dropdown of the 4
+        sample datasets (labeled by scenario, e.g. "Insufficient sample size",
+        not by filename); live row/column preview read through the existing
+        `data/loader.py`; example-question chips checked against
+        `agent/question_classifier.py`'s actual keyword rules, not guessed
+  - [x] Agent Pipeline panel — `decision_trail` rendered as a variable-length,
+        live-animated step sequence (2, 3, 7, or 8 steps depending on the real
+        branch taken — never padded to a fixed count, never shows a step the
+        backend already decided to skip). `SELECT_TEST` is always visually
+        highlighted as the decision point; `CHECK_NORMALITY` is highlighted
+        only when it actually fails. Aborted / needs-clarification runs end in
+        a distinct terminal card + banner instead of a stalled-looking
+        progress bar
+  - [x] Results panel — status card reflects the real `significant` boolean
+        with distinct (non-alarming) framing for the not-significant case, no
+        fabricated effect size (commented in code as future work since
+        `core/test_executor.py` doesn't compute one), reasoning broken into
+        readable lines, expandable compact reasoning trail, "Ask a new
+        question" (resets all three panels) and "Download Report" (new
+        `build_report_text()` helper local to `app.py`, exports a .md summary
+        — not a backend feature)
 - [x] **Milestone 4 — Documentation + Submission Package** (this milestone):
   - [x] `README.md` — full judge-facing rewrite: problem, why-agentic + branch
         table, features, architecture link, tech stack rationale, `uv` setup,
