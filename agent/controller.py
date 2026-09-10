@@ -4,10 +4,12 @@ Top-level orchestration for the data-analysis-pipeline-agent.
 run_pipeline() is the explicit state machine that IS the agentic core of this
 project:
 
-    LOAD -> CLASSIFY -> VALIDATE_SIZE -> CHECK_NORMALITY -> CHECK_VARIANCE
-    -> SELECT_TEST -> EXECUTE -> REPORT
+    LOAD -> DETECT_COLUMNS -> CLASSIFY -> VALIDATE_SIZE -> CHECK_NORMALITY
+    -> CHECK_VARIANCE -> SELECT_TEST -> EXECUTE -> REPORT
 
-with two early-exit branches:
+with three early-exit branches:
+  - stop right after DETECT_COLUMNS if which columns to compare is genuinely
+    ambiguous -- never guess a grouping/value column
   - stop right after CLASSIFY if the question is "unclear" -- never guess
     which columns to compare on a load-dependent statistical step
   - stop right after VALIDATE_SIZE if the sample size check fails -- never
@@ -24,7 +26,12 @@ from core.assumption_checker import check_equal_variance, check_normality
 from core.sample_size_validator import validate_sample_size
 from core.test_executor import run_test
 from core.test_selector import select_test
-from data.loader import load_groups
+from data.loader import (
+    detect_comparison_columns,
+    extract_direct_groups,
+    load_dataframe,
+    split_by_group,
+)
 
 
 def _early_exit(status, reasoning, decision_trail):
@@ -44,7 +51,7 @@ def run_pipeline(csv_path, question):
 
     # --- LOAD ---
     try:
-        group_a, group_b = load_groups(csv_path)
+        df = load_dataframe(csv_path)
     except ValueError as exc:
         decision_trail.append({
             "step": "LOAD",
@@ -57,9 +64,67 @@ def run_pipeline(csv_path, question):
     decision_trail.append({
         "step": "LOAD",
         "input": {"csv_path": csv_path},
-        "result": {"n_a": len(group_a), "n_b": len(group_b)},
-        "decision": "loaded dataset, proceeding to CLASSIFY",
+        "result": {"n_rows": len(df), "columns": list(df.columns)},
+        "decision": "loaded dataset, proceeding to DETECT_COLUMNS",
     })
+
+    # --- DETECT_COLUMNS ---
+    detection = detect_comparison_columns(df, question)
+
+    if detection["mode"] == "direct":
+        detect_decision = (
+            f"exactly 2 numeric columns found ({', '.join(detection['numeric_columns'])}); "
+            f"using them directly, proceeding to CLASSIFY"
+        )
+    elif detection["mode"] == "grouped":
+        detect_decision = (
+            f"auto-selected '{detection['group_col']}' as grouping column and "
+            f"'{detection['value_col']}' as value column ({detection['reason']}), "
+            f"proceeding to CLASSIFY"
+        )
+    else:
+        detect_decision = f"ambiguous: {detection['reason']}; stopping for clarification"
+
+    decision_trail.append({
+        "step": "DETECT_COLUMNS",
+        "input": {"columns": list(df.columns), "question": question},
+        "result": detection,
+        "decision": detect_decision,
+    })
+
+    if detection["mode"] == "ambiguous":
+        candidates = detection["candidates"] or []
+        reasoning = (
+            f"Could not automatically determine which columns to compare: "
+            f"{detection['reason']}."
+            + (f" Candidate columns: {', '.join(candidates)}." if candidates else "")
+            + " Please specify which columns represent the two groups to compare."
+        )
+        return _early_exit("needs_clarification", reasoning, decision_trail)
+
+    if detection["mode"] == "direct":
+        group_a, group_b = extract_direct_groups(df, detection["numeric_columns"])
+        source_sentence = (
+            f"Compared columns '{detection['numeric_columns'][0]}' and "
+            f"'{detection['numeric_columns'][1]}' directly. "
+        )
+    else:
+        try:
+            group_a, group_b = split_by_group(df, detection["group_col"], detection["value_col"])
+        except ValueError as exc:
+            decision_trail.append({
+                "step": "DETECT_COLUMNS",
+                "input": {"group_col": detection["group_col"], "value_col": detection["value_col"]},
+                "result": {"error": str(exc)},
+                "decision": "abort: could not split data by the detected grouping column",
+            })
+            return _early_exit(
+                "aborted", f"Could not split data by '{detection['group_col']}': {exc}", decision_trail
+            )
+        source_sentence = (
+            f"Compared '{detection['value_col']}' grouped by '{detection['group_col']}' "
+            f"({detection['reason']}). "
+        )
 
     # --- CLASSIFY ---
     question_type = classify_question(question)
@@ -165,6 +230,7 @@ def run_pipeline(csv_path, question):
         else ""
     )
     reasoning = (
+        source_sentence +
         f"Loaded {len(group_a)} samples for group_a and {len(group_b)} for group_b. "
         f"The question was classified as a two-group comparison. The sample size "
         f"check passed ({size_check['reason']}). Normality check "
