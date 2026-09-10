@@ -128,7 +128,9 @@ none are required to run it.**
 
 ## Team
 
-- **Tanya Sheemar** — `agent/` orchestration, `data/` loading, `app.py` (Streamlit
-  UI), documentation.
-- **[Teammate name]** — `core/` statistical logic (sample size validation,
-  assumption checks, test selection, test execution).
+- **Tanya Sheemar** 
+- **Ayush Chaudhary**
+
+## Note
+
+- Built with the assistance of Claude Code, in line with the hackathon's permitted use of AI coding assistants.
