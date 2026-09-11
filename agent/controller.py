@@ -103,7 +103,16 @@ def run_pipeline(csv_path, question):
         return _early_exit("needs_clarification", reasoning, decision_trail)
 
     if detection["mode"] == "direct":
-        group_a, group_b = extract_direct_groups(df, detection["numeric_columns"])
+        try:
+            group_a, group_b = extract_direct_groups(df, detection["numeric_columns"])
+        except ValueError as exc:
+            decision_trail.append({
+                "step": "DETECT_COLUMNS",
+                "input": {"numeric_columns": detection["numeric_columns"]},
+                "result": {"error": str(exc)},
+                "decision": "abort: could not read the detected numeric columns",
+            })
+            return _early_exit("aborted", f"Could not read the detected columns: {exc}", decision_trail)
         source_sentence = (
             f"Compared columns '{detection['numeric_columns'][0]}' and "
             f"'{detection['numeric_columns'][1]}' directly. "
@@ -219,8 +228,29 @@ def run_pipeline(csv_path, question):
         "step": "EXECUTE",
         "input": {"test": selection["test"], "n_a": len(group_a), "n_b": len(group_b)},
         "result": result,
-        "decision": "proceeding to REPORT",
+        "decision": (
+            "proceeding to REPORT"
+            if result["status"] == "ok"
+            else "stopping: test produced an invalid/undefined result"
+        ),
     })
+
+    if result["status"] == "invalid_result":
+        reasoning = (
+            source_sentence +
+            f"The pipeline selected {result['test_used']} ({selection['reason']}), but "
+            f"the test produced an invalid result: {result['reason']}. No conclusion "
+            f"about significance can be drawn from this result."
+        )
+        return {
+            "status": "invalid_result",
+            "test_used": result["test_used"],
+            "statistic": None,
+            "p_value": None,
+            "significant": None,
+            "reasoning": reasoning,
+            "decision_trail": decision_trail,
+        }
 
     # --- REPORT ---
     variance_sentence = (

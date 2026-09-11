@@ -5,7 +5,7 @@ import pytest
 
 from agent.controller import run_pipeline
 from agent.question_classifier import classify_question
-from data.loader import detect_comparison_columns
+from data.loader import detect_comparison_columns, extract_direct_groups, load_groups, split_by_group
 
 DATA_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -181,3 +181,60 @@ def test_grouped_mode_uses_only_numeric_column_without_needing_keyword_match():
     assert detection["mode"] == "grouped"
     assert detection["group_col"] == "gender"
     assert detection["value_col"] == "score"
+
+
+# ---------------------------------------------------------------------------
+# Robustness gaps: invalid (NaN) statistical results, infinite values
+# ---------------------------------------------------------------------------
+
+def test_pipeline_reports_invalid_result_for_constant_value_groups(tmp_path):
+    """Two constant-value groups pass normality (Shapiro-Wilk on constant data
+    is well-defined, p=1.0) but make Levene's/the t-test's variance term zero,
+    producing a NaN statistic. The pipeline must report this as
+    status='invalid_result', not silently claim 'no significant difference'."""
+    csv_path = _write_csv(tmp_path, "constant_groups.csv", {"group_a": [5, 5, 5, 5, 5], "group_b": [5, 5, 5, 5, 5]})
+    result = run_pipeline(csv_path, TWO_GROUP_QUESTION)
+
+    assert result["status"] == "invalid_result"
+    assert result["significant"] is None
+    assert result["statistic"] is None
+    assert result["p_value"] is None
+    assert result["reasoning"]
+
+    execute_entry = next(e for e in result["decision_trail"] if e["step"] == "EXECUTE")
+    assert execute_entry["result"]["status"] == "invalid_result"
+    steps = [e["step"] for e in result["decision_trail"]]
+    assert "REPORT" not in steps  # must stop at EXECUTE, never reach a fake REPORT
+
+
+def test_load_groups_raises_on_infinite_values(tmp_path):
+    csv_path = _write_csv(tmp_path, "with_inf.csv", {"group_a": [1, 2, 3, float("inf"), 5], "group_b": [6, 7, 8, 9, 10]})
+    with pytest.raises(ValueError, match="infinite"):
+        load_groups(csv_path)
+
+
+def test_extract_direct_groups_raises_on_infinite_values():
+    df = pd.DataFrame({"a": [1, 2, 3, float("inf")], "b": [4, 5, 6, 7]})
+    with pytest.raises(ValueError, match="infinite"):
+        extract_direct_groups(df, ["a", "b"])
+
+
+def test_split_by_group_raises_on_infinite_values():
+    df = pd.DataFrame(
+        {
+            "gender": ["Male", "Female", "Male", "Female"],
+            "score": [1, 2, float("-inf"), 4],
+        }
+    )
+    with pytest.raises(ValueError, match="infinite"):
+        split_by_group(df, "gender", "score")
+
+
+def test_pipeline_aborts_cleanly_on_infinite_values_end_to_end(tmp_path):
+    """Same infinite-value case, but through the full pipeline -- must abort
+    cleanly (status='aborted'), never crash with an unhandled exception."""
+    csv_path = _write_csv(tmp_path, "with_inf.csv", {"group_a": [1, 2, 3, float("inf"), 5, 6], "group_b": [6, 7, 8, 9, 10, 11]})
+    result = run_pipeline(csv_path, TWO_GROUP_QUESTION)
+
+    assert result["status"] == "aborted"
+    assert "infinite" in result["reasoning"]

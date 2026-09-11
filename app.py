@@ -6,12 +6,6 @@ agent.controller.run_pipeline(). This file's only job is to collect a CSV and
 a question, call the pipeline once, and render its decision_trail so a judge
 can see the branch-by-branch reasoning as it happened, not just a final number.
 
-IMPORTANT: the pipeline is variable-length, not a fixed 8 steps. Depending on
-what the assumption checks reveal, a run may stop after 2 steps (unclear
-question), 3 steps (insufficient sample size), 7 steps (normality failed, so
-CHECK_VARIANCE never runs), or the full 8 steps. This file always renders
-exactly what is in decision_trail -- it never pads to a fixed count and never
-shows a step the backend already decided to skip.
 """
 
 import os
@@ -194,6 +188,10 @@ def inject_css():
         .step-card.terminal-clarify .step-name::before { content: "❓ "; color: var(--warning); }
         .step-card.terminal-clarify .badge.term { background: var(--warning); color:#0d1117; }
 
+        .step-card.terminal-invalid { border-color: var(--warning); background: var(--warning-soft); }
+        .step-card.terminal-invalid .step-name::before { content: "⚠ "; color: var(--warning); }
+        .step-card.terminal-invalid .badge.term { background: var(--warning); color:#0d1117; }
+
         .terminal-banner {
             border-radius:10px; padding:0.7rem 0.85rem; margin-top:0.4rem; font-size:0.85rem;
             border:1px solid var(--border); font-weight:600;
@@ -270,6 +268,8 @@ def _describe(entry):
             return f"Loaded {n_a} values for group_a and {n_b} for group_b."
         return "Dataset loaded."
     if step == "DETECT_COLUMNS":
+        if "error" in res:
+            return f"Could not read the detected columns: {res['error']}"
         mode = res.get("mode")
         if mode == "direct":
             cols = res.get("numeric_columns") or []
@@ -300,6 +300,8 @@ def _describe(entry):
     if step == "SELECT_TEST":
         return res["reason"]
     if step == "EXECUTE":
+        if res.get("status") == "invalid_result":
+            return f"Ran {res['test_used']}, but the result was undefined: {res['reason']}"
         return (
             f"Ran {res['test_used']}: statistic={res['statistic']:.4f}, "
             f"p-value={res['p_value']:.4f}."
@@ -320,6 +322,9 @@ def _card_classes(entry, is_last, overall_status):
         if step == "LOAD" and "error" in res:
             classes = ["step-card", "terminal-abort"]
             badge = '<span class="badge term">STOPPED</span>'
+        elif step == "DETECT_COLUMNS" and "error" in res:
+            classes = ["step-card", "terminal-abort"]
+            badge = '<span class="badge term">STOPPED</span>'
         elif step == "DETECT_COLUMNS" and res.get("mode") == "ambiguous":
             classes = ["step-card", "terminal-clarify"]
             badge = '<span class="badge term">STOPPED</span>'
@@ -332,6 +337,9 @@ def _card_classes(entry, is_last, overall_status):
         elif step == "SELECT_TEST" and res.get("action") == "abort":
             classes = ["step-card", "terminal-abort"]
             badge = '<span class="badge term">STOPPED</span>'
+        elif step == "EXECUTE" and res.get("status") == "invalid_result":
+            classes = ["step-card", "terminal-invalid"]
+            badge = '<span class="badge term">INVALID RESULT</span>'
         return classes, badge
 
     if step == "SELECT_TEST" and res.get("action") == "run_test":
@@ -390,6 +398,11 @@ def _terminal_banner_html(status, n_steps):
             f'<div class="terminal-banner clarify">❓ Stopped after {n_steps} step'
             f'{"s" if n_steps != 1 else ""} — question needs clarification.</div>'
         )
+    if status == "invalid_result":
+        return (
+            f'<div class="terminal-banner clarify">⚠️ Stopped after {n_steps} step'
+            f'{"s" if n_steps != 1 else ""} — the test produced an undefined result.</div>'
+        )
     return ""
 
 
@@ -431,6 +444,8 @@ def _pipeline_chip(result, animating):
         return '<span class="badge" style="background:var(--success-soft);color:var(--success);">✓ DONE</span>'
     if result["status"] == "aborted":
         return '<span class="badge" style="background:var(--danger-soft);color:var(--danger);">⛔ ABORTED</span>'
+    if result["status"] == "invalid_result":
+        return '<span class="badge" style="background:var(--warning-soft);color:var(--warning);">⚠ INVALID</span>'
     return '<span class="badge" style="background:var(--warning-soft);color:var(--warning);">❓ CLARIFY</span>'
 
 
@@ -771,6 +786,8 @@ with col_results:
             result_status_chip = '<span class="badge" style="background:var(--success-soft);color:var(--success);">✓ COMPLETE</span>'
         elif result["status"] == "aborted":
             result_status_chip = '<span class="badge" style="background:var(--danger-soft);color:var(--danger);">⛔ ABORTED</span>'
+        elif result["status"] == "invalid_result":
+            result_status_chip = '<span class="badge" style="background:var(--warning-soft);color:var(--warning);">⚠ INVALID RESULT</span>'
         else:
             result_status_chip = '<span class="badge" style="background:var(--warning-soft);color:var(--warning);">❓ NEEDS INPUT</span>'
 
@@ -827,6 +844,17 @@ with col_results:
                 '<div><div class="status-title">Insufficient Data — Pipeline Aborted</div>'
                 '<div class="status-desc">No statistical test was run because the data '
                 "could not support one. See the reasoning below.</div></div></div>",
+                unsafe_allow_html=True,
+            )
+        elif status == "invalid_result":
+            st.markdown(
+                f'<div class="status-card clarify"><div class="status-icon">⚠️</div>'
+                f'<div><div class="status-title">Result Undefined — No Conclusion Possible</div>'
+                f'<div class="status-desc">{result["test_used"]} produced a mathematically '
+                "undefined result (this typically happens when one or both groups have "
+                "zero variance, e.g. identical values). This is not the same as "
+                '"no significant difference" -- no conclusion can be drawn here. See the '
+                "reasoning below for details.</div></div></div>",
                 unsafe_allow_html=True,
             )
         else:

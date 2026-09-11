@@ -56,7 +56,7 @@ system, not incidental to it.
 
 ## Architecture
 
-See [docs/architecture.md](docs/architecture.md) for the full flowchart. In short:
+In short:
 a deterministic `agent/controller.py` state machine calls into `data/` for loading,
 `agent/question_classifier.py` for question classification, and `core/` for every
 statistical decision (sample size validation, normality/variance checks, test
@@ -101,7 +101,7 @@ pytest tests/ -v
 **None required.** No API keys, no `.env` file — the entire system runs offline.
 The only place a network dependency was ever considered (an LLM-assisted question
 classifier) was deliberately rejected in favor of a fully deterministic,
-keyword-based classifier; see [docs/decisions.md](docs/decisions.md) for why.
+keyword-based classifier.
 
 **No API keys, passwords, or credentials are committed to this repository, and
 none are required to run it.**

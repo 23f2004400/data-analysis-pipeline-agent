@@ -22,6 +22,17 @@ import pandas as pd
 REQUIRED_COLUMNS = ("group_a", "group_b")
 
 
+def _check_no_inf(array, label):
+    """Raise a clear ValueError if array contains +inf/-inf -- statistical
+    tests (variance, t-tests, etc.) cannot handle infinite values, so this
+    must be caught before the data ever reaches core/."""
+    if np.isinf(array).any():
+        raise ValueError(
+            f"{label} contains infinite value(s) (+inf/-inf), which statistical "
+            f"tests cannot handle"
+        )
+
+
 def _read_csv(csv_path):
     try:
         return pd.read_csv(csv_path)
@@ -65,6 +76,9 @@ def load_groups(csv_path):
         raise ValueError(
             f"CSV at {csv_path} contains non-numeric values in group_a/group_b: {exc}"
         )
+
+    _check_no_inf(group_a, f"CSV at {csv_path}, column 'group_a'")
+    _check_no_inf(group_b, f"CSV at {csv_path}, column 'group_b'")
 
     return group_a, group_b
 
@@ -220,6 +234,8 @@ def extract_direct_groups(df, numeric_columns):
     col_a, col_b = numeric_columns
     group_a = pd.to_numeric(df[col_a], errors="raise").dropna().to_numpy(dtype=float)
     group_b = pd.to_numeric(df[col_b], errors="raise").dropna().to_numpy(dtype=float)
+    _check_no_inf(group_a, f"column '{col_a}'")
+    _check_no_inf(group_b, f"column '{col_b}'")
     return group_a, group_b
 
 
@@ -247,4 +263,6 @@ def split_by_group(df, group_col, value_col):
     group_b = pd.to_numeric(
         clean.loc[clean[group_col] == categories[1], value_col], errors="raise"
     ).to_numpy(dtype=float)
+    _check_no_inf(group_a, f"column '{value_col}' where '{group_col}' == '{categories[0]}'")
+    _check_no_inf(group_b, f"column '{value_col}' where '{group_col}' == '{categories[1]}'")
     return group_a, group_b
