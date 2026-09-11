@@ -6,6 +6,8 @@ and hoping the data cooperates.
 
 Built for the **Agentic AI Hackathon** (Tech Zephyr 4.0, IIT Bhubaneswar).
 
+🔗 **Live demo:** https://data-analysis-pipeline-agent.streamlit.app/
+
 ## Problem statement
 
 Given a raw dataset and a plain-English comparison question (e.g. "is there a
@@ -73,6 +75,14 @@ selection, test execution) — no LLM is involved at any point in that chain.
 | **Streamlit** | Fastest path to an interactive, demoable UI with no separate frontend build step — appropriate for a hackathon timeline. |
 
 ## Setup
+
+The steps below are only needed to run the app locally — this is optional. The
+[live demo](https://data-analysis-pipeline-agent.streamlit.app/) above requires no
+setup at all; it's just worth knowing that Streamlit Community Cloud's free tier
+puts apps to sleep after inactivity, so the first visit after a while can take
+~30-60 seconds to wake up. If it's slow to load, that's why — refresh and it'll be
+fast from then on. Local setup below is the fallback if you'd rather not wait, or
+want to run it offline.
 
 This project uses [uv](https://github.com/astral-sh/uv) for virtual environment
 management.
